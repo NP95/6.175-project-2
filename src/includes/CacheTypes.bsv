@@ -73,6 +73,19 @@ typedef union tagged {
     CacheMemResp    Resp;
 } CacheMemMessage deriving(Eq, Bits, FShow);
 
+function WideMemReq toWideMemReq( MemReq req );
+    CacheWordSelect word_sel = truncate( req.addr >> 2 );
+    WideMemReq ret = ?;
+    ret.write_en = 0;
+    if( req.op == St ) begin
+        ret.write_en[word_sel] = 1;
+    end
+    ret.addr = req.addr & 32'hFFFFFFE0;
+    ret.addr = req.addr;
+    ret.data = replicate(req.data);
+    return ret;
+endfunction
+
 // Interfaces
 interface MessageFifo#( numeric type n );
     method Action enq_resp( CacheMemResp d );

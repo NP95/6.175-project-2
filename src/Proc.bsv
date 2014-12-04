@@ -84,18 +84,29 @@ module mkProc(Proc);
     /////////////////////
 
     // construct the necessary number of message FIFOs and connect them with the message router
+    Vector#( NumCaches, MessageFifo#( 8 ) ) c2r <- replicateM( mkMessageFifo );
+    Vector#( NumCaches, MessageFifo#( 8 ) ) r2c <- replicateM( mkMessageFifo );
+    MessageFifo#( 8 ) m2r <- mkMessageFifo;
+    MessageFifo#( 8 ) r2m <- mkMessageFifo;
+    Empty router <- mkMessageRouter( c2r, r2c, m2r, r2m );
 
     ///////////////////////////////
     // Parent Protocol Processor //
     ///////////////////////////////
 
     // connect the parent protocol processor to dMemWideMemWrapper
+    Empty ppp <- mkParentProtocolProcessor( r2m, m2r, dMemWideMemWrapper );
 
     /////////////////
     // Data Caches //
     /////////////////
 
     // connect each core's dCacheClient to a non-blocking cache using mkConnection
+    Vector#( NumCores, NBCache ) dCache;
+    for( Integer i = 0; i < valueOf( NumCores ); i = i + 1 ) begin
+        dCache[ i ] <- mkNBCache( fromInteger( i ), m2r, r2m );
+        mkConnection( dCache[ i ], cores[ i ].dCacheClient );
+    end
 
     ///////////////////////////
     // CPU to Host debugging //

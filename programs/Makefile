@@ -6,7 +6,7 @@
 # To get the makefile to work, unpack smips-gcc.tar.gz in SMIPS_DIR. The smips
 # compiler is a 32-bit executable so you may need 32-bit libraries for your
 # computer to get it to work.
-SMIPS_DIR=/home/$(USER)/tools/smips-gcc
+SMIPS_DIR=/mit/6.175/smips-gcc
 
 CC=$(SMIPS_DIR)/bin/smips-gcc -B$(SMIPS_DIR)/lib/gcc-lib/smips/egcs-2.90.29/ -B/$(SMIPS_DIR)/bin/ -B/$(SMIPS_DIR)/smips/bin/ -G 0
 
@@ -74,10 +74,10 @@ $(mc_benchmarks_exe): build/%.mc_bench.exe:
 	$(CC) -static -O2 -nostdlib -nostartfiles -Wa,-O0 -Wl,-Ttext=0x1000,-e__mc_start lib/mc_start.S lib/print.c lib/cop.c lib/lock.c $^ -o $@
 
 %.dump: %.exe
-	/home/$(USER)/tools/smips-gcc/bin/smips-objdump --disassemble-all --disassemble-zeroes $< > $@
+	$(SMIPS_DIR)/bin/smips-objdump --disassemble-all --disassemble-zeroes $< > $@
 
 %.vmh: %.dump
-	/home/$(USER)/tools/smips-gcc/bin/objdump2vmh.pl $< $@
+	$(SMIPS_DIR)/bin/objdump2vmh.pl $< $@
 
 clean:
 	-rm -rf build
