@@ -140,26 +140,17 @@ module mkNBCache( CacheID c,
     endrule
     
     method Action req( NBCacheReq r ) if( cacheState == Ready );
-        if( r.op == Ld ) begin
+        if( r.op == Ld  || r.op == Ll ) begin
+            if (r.op == Ll) linkAddr <= tagged Valid r.addr;
             let idx = getIndex( r.addr );
             let inCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] != I;
             if( stQ.search( r.addr ) matches tagged Valid .dat ) return_hit( dat, r.token );
             else if( inCache ) return_hit( data[ idx ][ getOffset( r.addr ) ], r.token );
             else begin
-                ldBf.enq( LdBuffData{ addr: r.addr, op: Ld, token: r.token } );
+                ldBf.enq( LdBuffData{ addr: r.addr, op: r.op, token: r.token } );
                 if( can_send_upgrade_req( r.addr, S ) ) send_upgrade_req( r.addr, S );
             end
-        end else if (r.op == Ll ) begin
-            linkAddr <= tagged Valid r.addr;
-            let idx = getIndex( r.addr );
-            let inCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] != I;
-            if( stQ.search( r.addr ) matches tagged Valid .dat ) return_hit( dat, r.token );
-            else if( inCache ) return_hit( data[ idx ][ getOffset( r.addr ) ], r.token );
-            else begin
-                ldBf.enq( LdBuffData{ addr: r.addr, op: Ll, token: r.token } );
-                if( can_send_upgrade_req( r.addr, S ) ) send_upgrade_req( r.addr, S );
-            end
-        end else if( r.op == St ) begin
+       end else if( r.op == St ) begin
             let idx = getIndex( r.addr );
             let canUpdateCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] == M && stQ.empty;
             if( canUpdateCache ) update_cache_data( r.addr, M, r.data );
