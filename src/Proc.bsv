@@ -104,7 +104,7 @@ module mkProc(Proc);
     // connect each core's dCacheClient to a non-blocking cache using mkConnection
     Vector#( NumCores, NBCache ) dCache;
     for( Integer i = 0; i < valueOf( NumCores ); i = i + 1 ) begin
-        dCache[ i ] <- mkNBCache( fromInteger( i ), m2r, r2m );
+        dCache[ i ] <- mkNBCache( fromInteger( i ), r2c[i], c2r[i] );
         mkConnection( dCache[ i ], cores[ i ].dCacheClient );
     end
 

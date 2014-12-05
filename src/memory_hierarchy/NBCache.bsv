@@ -28,10 +28,10 @@ module mkNBCache( CacheID c,
     Reg#( NBCacheState ) cacheState <- mkReg( Ready );
     Reg#( CacheMemResp ) memResp <- mkRegU;
     
-    Vector#( NBCacheSize, Reg#( MSI ) )           state <- replicateM( mkReg( I ) );
-    Vector#( NBCacheSize, Reg#( Maybe#( MSI ) ) ) waitp <- replicateM( mkReg( tagged Invalid ) );
-    Vector#( NBCacheSize, Reg#( CacheTag ) )      tag   <- replicateM( mkRegU );
-    Vector#( NBCacheSize, Reg#( CacheLine ) )     data  <- replicateM( mkRegU );
+    Vector#( CacheRows, Reg#( MSI ) )           state <- replicateM( mkReg( I ) );
+    Vector#( CacheRows, Reg#( Maybe#( MSI ) ) ) waitp <- replicateM( mkReg( tagged Invalid ) );
+    Vector#( CacheRows, Reg#( CacheTag ) )      tag   <- replicateM( mkRegU );
+    Vector#( CacheRows, Reg#( CacheLine ) )     data  <- replicateM( mkRegU );
     
     Fifo#( 2, NBCacheResp ) hitQ <- mkCFFifo;
     StQ#( StQSz )           stQ  <- mkStQ;
