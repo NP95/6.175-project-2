@@ -47,14 +47,14 @@ module mkNBCache( CacheID c,
             let idx = getIndex( a );
             if (isValid(linkAddr)) begin
                 let linkA = validValue(linkAddr);
-                if (idx == getIndex( linkA ) && linkA != a) begin
+                if (idx == getIndex( linkA ) && getTag(linkA) != getTag(a))
                     linkAddr <= tagged Invalid;
-                end
             end
             state[ idx ] <= y;
             waitp[ idx ] <= tagged Invalid;
-            tag  [ idx ] <= getTag( a );
-            data [ idx ] <= d;
+            if (state[idx] == I) begin
+                data [ idx ] <= d;
+            end
         endaction);
     endfunction
     
@@ -62,7 +62,7 @@ module mkNBCache( CacheID c,
         return (action
             let idx = getIndex( a );
             let off = getOffset( a );
-            state[ idx ]        <= y;
+            state[ idx ] <= y;
             data [ idx ][ off ] <= d;
         endaction);
     endfunction
@@ -85,11 +85,11 @@ module mkNBCache( CacheID c,
         return (action
             let idx  = getIndex( a );
             let cTag = getTag( a );
-            tag  [ idx ] <= getTag( a );
-            waitp[ idx ] <= tagged Valid y;
             c2p.enq_req( CacheMemReq{ child: c, addr: a, state: y } );
             if( state[ idx ] != I && tag[ idx ] != cTag )
                 send_downgrade_resp( { tag[ idx ], idx, 0 }, I );
+            tag  [ idx ] <= getTag( a );
+            waitp[ idx ] <= tagged Valid y;
         endaction);
     endfunction
     
@@ -115,7 +115,7 @@ module mkNBCache( CacheID c,
     
     rule onStHit( cacheState == StHitState );
        let idx = getIndex( memResp.addr );
-       if( !stQ.empty && memResp.addr >> 6 == stQ.first.addr >> 6 && state[ idx ] == M  ) begin
+       if( !stQ.empty && getTag(memResp.addr) == getTag(stQ.first.addr) && idx == getIndex(stQ.first.addr) && state[ idx ] == M  ) begin
            stQ.deq;
            if (stQ.first.op == Sc) begin
                if (linkAddr == tagged Valid stQ.first.addr) begin
@@ -152,7 +152,7 @@ module mkNBCache( CacheID c,
             end
        end else if( r.op == St ) begin
             let idx = getIndex( r.addr );
-            let canUpdateCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] == M && stQ.empty;
+            let canUpdateCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] == M && waitp[ idx ] == tagged Invalid;
             if( canUpdateCache ) update_cache_data( r.addr, M, r.data );
             else begin
                 stQ.enq( StQData{ op: St, addr: r.addr, data: r.data, token: ? } ); // TODO
@@ -161,7 +161,7 @@ module mkNBCache( CacheID c,
         end else if( r.op == Sc ) begin
             if (linkAddr == tagged Valid r.addr) begin
                 let idx = getIndex( r.addr );
-                let canUpdateCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] == M && stQ.empty;
+                let canUpdateCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] == M && waitp[ idx ] == tagged Invalid;
                 if( canUpdateCache ) begin
                     update_cache_data( r.addr, M, r.data );
                     linkAddr <= tagged Invalid;
