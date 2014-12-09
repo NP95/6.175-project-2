@@ -39,7 +39,7 @@ module mkNBCache( CacheID c, MessageFifo#( n ) p2c, MessageFifo#( n ) c2p, NBCac
         return (action
             hitQ.enq( NBCacheResp{ data: d, token: t } );
             if( op == Ll ) linkAddr <= tagged Valid a;
-            if( op == Sc ) linkAddr <= tagged Invalid;
+            //if( op == Sc ) linkAddr <= tagged Invalid;
         endaction);
     endfunction
     

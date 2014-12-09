@@ -53,7 +53,7 @@ instance Ord#(MSI);
 endinstance
 
 // Sizes
-typedef TMul#(2,NumCores) NumCaches;
+typedef NumCores NumCaches;
 typedef Bit#(TLog#(NumCaches)) CacheID;
 
 // Structures
