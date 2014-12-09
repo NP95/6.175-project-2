@@ -82,7 +82,7 @@ module mkParentProtocolProcessor( MessageFifo#( n ) r2m,
                     if( i matches tagged Invalid ) begin
                         if( getChild( c, a ) == I ) begin
                             if( memResp ) begin
-                                let dat <- l2.resp;
+                                let dat <- useL2Cache ? l2.resp : mem.resp;
                                 let r = CacheMemResp{ child: c, addr: a, state: y, data: dat };
                                 m2r.enq_resp( r );
                                 setChild( c, a, y );
