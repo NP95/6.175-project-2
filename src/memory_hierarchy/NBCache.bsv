@@ -45,15 +45,17 @@ module mkNBCache( CacheID c, MessageFifo#( n ) p2c, MessageFifo#( n ) c2p, NBCac
     
     function Action update_cache_line( Addr a, MSI y, CacheLine d );
         return (action
-            let t = getTag( a );
-            let i = getIndex( a );
-            if ( linkAddr matches tagged Valid .linkA )
-                if ( getTag( linkA ) != t && getIndex( linkA ) == i )
+            let idx = getIndex( a );
+            if (isValid(linkAddr)) begin
+                let linkA = validValue(linkAddr);
+                if (idx == getIndex( linkA ) && getTag(linkA) != getTag(a))
                     linkAddr <= tagged Invalid;
-            state[ i ] <= y;
-            waitp[ i ] <= tagged Invalid;
-            tag  [ i ] <= t;
-            data [ i ] <= d;
+            end
+            state[ idx ] <= y;
+            waitp[ idx ] <= tagged Invalid;
+            if (state[idx] == I) begin
+                data [ idx ] <= d;
+            end
         endaction);
     endfunction
     
@@ -61,7 +63,7 @@ module mkNBCache( CacheID c, MessageFifo#( n ) p2c, MessageFifo#( n ) c2p, NBCac
         return (action
             let idx = getIndex( a );
             let off = getOffset( a );
-            state[ idx ]        <= y;
+            state[ idx ] <= y;
             data [ idx ][ off ] <= d;
         endaction);
     endfunction
@@ -84,11 +86,11 @@ module mkNBCache( CacheID c, MessageFifo#( n ) p2c, MessageFifo#( n ) c2p, NBCac
         return (action
             let idx  = getIndex( a );
             let cTag = getTag( a );
-            tag  [ idx ] <= getTag( a );
-            waitp[ idx ] <= tagged Valid y;
             c2p.enq_req( CacheMemReq{ child: c, addr: a, state: y } );
             if( state[ idx ] != I && tag[ idx ] != cTag )
                 send_downgrade_resp( { tag[ idx ], idx, 0 }, I );
+            tag  [ idx ] <= getTag( a );
+            waitp[ idx ] <= tagged Valid y;
         endaction);
     endfunction
     
@@ -114,8 +116,8 @@ module mkNBCache( CacheID c, MessageFifo#( n ) p2c, MessageFifo#( n ) c2p, NBCac
     endrule
     
     rule onStHit( cacheState == StHitState );
-       let i = getIndex( memResp.addr );
-       if( !stQ.empty && memResp.addr >> 6 == stQ.first.addr >> 6 && state[ i ] == M  ) begin
+       let idx = getIndex( memResp.addr );
+       if( !stQ.empty && getTag(memResp.addr) == getTag(stQ.first.addr) && idx == getIndex(stQ.first.addr) && state[ idx ] == M  ) begin
            stQ.deq;
            let r = stQ.first;
            if ( r.op == Sc ) begin
@@ -151,15 +153,17 @@ module mkNBCache( CacheID c, MessageFifo#( n ) p2c, MessageFifo#( n ) c2p, NBCac
                 if( can_send_upgrade_req( r.addr, S ) ) send_upgrade_req( r.addr, S );
             end
        end else if( r.op == St ) begin
-            let canUpdateCache = tag[ i ] == getTag( r.addr ) && state[ i ] == M && stQ.empty;
+            let idx = getIndex( r.addr );
+            let canUpdateCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] == M && waitp[ idx ] == tagged Invalid;
             if( canUpdateCache ) update_cache_data( r.addr, M, r.data );
             else begin
                 stQ.enq( StQData{ op: r.op, addr: r.addr, data: r.data, token: unpack( 0 ) } );
                 if( can_send_upgrade_req( r.addr, M ) ) send_upgrade_req( r.addr, M );
             end
         end else if( r.op == Sc ) begin
-            if ( linkAddr == tagged Valid r.addr) begin
-                let canUpdateCache = tag[ i ] == getTag( r.addr ) && state[ i ] == M && stQ.empty;
+            if (linkAddr == tagged Valid r.addr) begin
+                let idx = getIndex( r.addr );
+                let canUpdateCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] == M && waitp[ idx ] == tagged Invalid;
                 if( canUpdateCache ) begin
                     update_cache_data( r.addr, M, r.data );
                     return_hit( r.op, r.addr, 1, r.token );
