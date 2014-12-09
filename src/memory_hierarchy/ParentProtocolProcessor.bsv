@@ -13,6 +13,8 @@ module mkParentProtocolProcessor( MessageFifo#( n ) r2m,
                                   WideMem mem,
                                   Empty ifc );
     
+    Bool useL2Cache = False;
+    
     Reg#( Bool ) memResp <- mkReg( False );
     
     L2Cache l2 <- mkSACache( mem );
@@ -25,8 +27,8 @@ module mkParentProtocolProcessor( MessageFifo#( n ) r2m,
         tag   <- replicateM( replicateM( mkRegU ) );
     
     function MSI getChild( CacheID c, Addr a );
-        let idx = getIndex( a );
-        return tag[ c ][ idx ] == getTag( a ) ? state[ c ][ idx ] : I;
+        let i = getIndex( a );
+        return tag[ c ][ i ] == getTag( a ) ? state[ c ][ i ] : I;
     endfunction
     
     function Action setChild( CacheID c, Addr a, MSI y );
@@ -37,8 +39,8 @@ module mkParentProtocolProcessor( MessageFifo#( n ) r2m,
     endfunction
     
     function Maybe#( MSI ) getWaitc( CacheID c, Addr a );
-        let idx = getIndex( a );
-        return tag[ c ][ idx ] == getTag( a ) ? waitc[ c ][ idx ] : tagged Invalid;
+        let i = getIndex( a );
+        return tag[ c ][ i ] == getTag( a ) ? waitc[ c ][ i ] : tagged Invalid;
     endfunction
     
     function Action setWaitc( CacheID c, Addr a, Maybe#( MSI ) w );
@@ -87,7 +89,10 @@ module mkParentProtocolProcessor( MessageFifo#( n ) r2m,
                                 r2m.deq;
                                 memResp <= False;
                             end else begin
-                                l2.req( toWideMemReq( MemReq{ op: Ld, addr: a, data: ? } ) );
+                                if( useL2Cache )
+                                    l2.req( toWideMemReq( MemReq{ op: Ld, addr: a, data: ? } ) );
+                                else
+                                    mem.req( toWideMemReq( MemReq{ op: Ld, addr: a, data: ? } ) );
                                 memResp <= True;
                             end
                         end else begin
@@ -115,7 +120,10 @@ module mkParentProtocolProcessor( MessageFifo#( n ) r2m,
                 r2m.deq;
                 Addr addr = { getTag( a ), getIndex( a ), '0 };
                 if( getChild( c, a ) == M )
-                    l2.req( WideMemReq{ write_en: '1, addr: addr, data: dat } );
+                    if( useL2Cache )
+                        l2.req( WideMemReq{ write_en: '1, addr: addr, data: dat } );
+                    else
+                        mem.req( WideMemReq{ write_en: '1, addr: addr, data: dat } );
                 setChild( c, a, y );
                 if( isValid( getWaitc( c, a ) ) && fromMaybe( ?, getWaitc( c, a ) ) >= y )
                     setWaitc( c, a, tagged Invalid );
