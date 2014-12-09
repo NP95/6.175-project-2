@@ -20,14 +20,11 @@ typedef enum {
     LdReqState
 } NBCacheState deriving ( Bits, Eq );
 
-module mkNBCache( CacheID c,
-                  MessageFifo#( n ) p2c,
-                  MessageFifo#( n ) c2p,
-                  NBCache ifc );
+module mkNBCache( CacheID c, MessageFifo#( n ) p2c, MessageFifo#( n ) c2p, NBCache ifc );
     
-    Reg#( NBCacheState ) cacheState <- mkReg( Ready );
-    Reg#( CacheMemResp ) memResp <- mkRegU;
-    Reg#( Maybe#(Addr) ) linkAddr <- mkReg( tagged Invalid );
+    Reg#( NBCacheState )   cacheState <- mkReg( Ready );
+    Reg#( CacheMemResp )   memResp    <- mkRegU;
+    Reg#( Maybe#( Addr ) ) linkAddr   <- mkReg( tagged Invalid );
     
     Vector#( CacheRows, Reg#( MSI ) )           state <- replicateM( mkReg( I ) );
     Vector#( CacheRows, Reg#( Maybe#( MSI ) ) ) waitp <- replicateM( mkReg( tagged Invalid ) );
@@ -38,23 +35,25 @@ module mkNBCache( CacheID c,
     StQ#( StQSz )           stQ  <- mkStQ;
     LdBuff#( LdBuffSz )     ldBf <- mkLdBuff;
     
-    function Action return_hit( Data d, NBCacheToken t );
-        return (action hitQ.enq( NBCacheResp{ data: d, token: t } ); endaction);
+    function Action return_hit( MemOp op, Addr a, Data d, NBCacheToken t );
+        return (action
+            hitQ.enq( NBCacheResp{ data: d, token: t } );
+            if( op == Ll ) linkAddr <= tagged Valid a;
+            if( op == Sc ) linkAddr <= tagged Invalid;
+        endaction);
     endfunction
     
     function Action update_cache_line( Addr a, MSI y, CacheLine d );
         return (action
-            let idx = getIndex( a );
-            if (isValid(linkAddr)) begin
-                let linkA = validValue(linkAddr);
-                if (idx == getIndex( linkA ) && linkA != a) begin
+            let t = getTag( a );
+            let i = getIndex( a );
+            if ( linkAddr matches tagged Valid .linkA )
+                if ( getTag( linkA ) != t && getIndex( linkA ) == i )
                     linkAddr <= tagged Invalid;
-                end
-            end
-            state[ idx ] <= y;
-            waitp[ idx ] <= tagged Invalid;
-            tag  [ idx ] <= getTag( a );
-            data [ idx ] <= d;
+            state[ i ] <= y;
+            waitp[ i ] <= tagged Invalid;
+            tag  [ i ] <= t;
+            data [ i ] <= d;
         endaction);
     endfunction
     
@@ -109,21 +108,22 @@ module mkNBCache( CacheID c,
     rule onLdHit( cacheState == LdHitState );
         if( ldBf.searchHit( memResp.addr ) matches tagged Valid .hit ) begin
             ldBf.remove( tpl_1( hit ) );
-            return_hit( memResp.data[ getOffset( tpl_2( hit ).addr ) ], tpl_2( hit ).token );
+            let r = tpl_2( hit );
+            return_hit( r.op, r.addr, memResp.data[ getOffset( r.addr ) ], r.token );
         end else cacheState <= StHitState;
     endrule
     
     rule onStHit( cacheState == StHitState );
-       let idx = getIndex( memResp.addr );
-       if( !stQ.empty && memResp.addr >> 6 == stQ.first.addr >> 6 && state[ idx ] == M  ) begin
+       let i = getIndex( memResp.addr );
+       if( !stQ.empty && memResp.addr >> 6 == stQ.first.addr >> 6 && state[ i ] == M  ) begin
            stQ.deq;
-           if (stQ.first.op == Sc) begin
-               if (linkAddr == tagged Valid stQ.first.addr) begin
-                   update_cache_data( stQ.first.addr, memResp.state, stQ.first.data );
-                   linkAddr <= tagged Invalid;
-                   return_hit(1, stQ.first.token);
-               end else return_hit(0, stQ.first.token);
-           end else update_cache_data( stQ.first.addr, memResp.state, stQ.first.data );
+           let r = stQ.first;
+           if ( r.op == Sc ) begin
+               if ( linkAddr == tagged Valid r.addr) begin
+                   update_cache_data( r.addr, memResp.state, r.data );
+                   return_hit( r.op, r.addr, 1, r.token );
+               end else return_hit( r.op, r.addr, 0, r.token );
+           end else update_cache_data( r.addr, memResp.state, r.data );
        end else cacheState <= StReqState;
     endrule
     
@@ -140,39 +140,34 @@ module mkNBCache( CacheID c,
     endrule
     
     method Action req( NBCacheReq r ) if( cacheState == Ready );
-        if( r.op == Ld  || r.op == Ll ) begin
-            if (r.op == Ll) linkAddr <= tagged Valid r.addr;
-            let idx = getIndex( r.addr );
-            let inCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] != I;
-            if( stQ.search( r.addr ) matches tagged Valid .dat ) return_hit( dat, r.token );
-            else if( inCache ) return_hit( data[ idx ][ getOffset( r.addr ) ], r.token );
+        let i = getIndex( r.addr );
+        if( r.op == Ld || r.op == Ll ) begin
+            //if ( r.op == Ll ) linkAddr <= tagged Valid r.addr;
+            let inCache = tag[ i ] == getTag( r.addr ) && state[ i ] != I;
+            if( stQ.search( r.addr ) matches tagged Valid .d ) return_hit( r.op, r.addr, d, r.token );
+            else if( inCache ) return_hit( r.op, r.addr, data[ i ][ getOffset( r.addr ) ], r.token );
             else begin
-                ldBf.enq( LdBuffData{ addr: r.addr, op: r.op, token: r.token } );
+                ldBf.enq( LdBuffData{ op: r.op, addr: r.addr, token: r.token } );
                 if( can_send_upgrade_req( r.addr, S ) ) send_upgrade_req( r.addr, S );
             end
        end else if( r.op == St ) begin
-            let idx = getIndex( r.addr );
-            let canUpdateCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] == M && stQ.empty;
+            let canUpdateCache = tag[ i ] == getTag( r.addr ) && state[ i ] == M && stQ.empty;
             if( canUpdateCache ) update_cache_data( r.addr, M, r.data );
             else begin
-                stQ.enq( StQData{ op: St, addr: r.addr, data: r.data, token: ? } ); // TODO
+                stQ.enq( StQData{ op: r.op, addr: r.addr, data: r.data, token: unpack( 0 ) } );
                 if( can_send_upgrade_req( r.addr, M ) ) send_upgrade_req( r.addr, M );
             end
         end else if( r.op == Sc ) begin
-            if (linkAddr == tagged Valid r.addr) begin
-                let idx = getIndex( r.addr );
-                let canUpdateCache = tag[ idx ] == getTag( r.addr ) && state[ idx ] == M && stQ.empty;
+            if ( linkAddr == tagged Valid r.addr) begin
+                let canUpdateCache = tag[ i ] == getTag( r.addr ) && state[ i ] == M && stQ.empty;
                 if( canUpdateCache ) begin
                     update_cache_data( r.addr, M, r.data );
-                    linkAddr <= tagged Invalid;
-                    return_hit(1, r.token);
+                    return_hit( r.op, r.addr, 1, r.token );
                 end else begin
-                    stQ.enq( StQData{ op: Sc, addr: r.addr, data: r.data, token: r.token } ); // TODO
+                    stQ.enq( StQData{ op: r.op, addr: r.addr, data: r.data, token: r.token } );
                     if( can_send_upgrade_req( r.addr, M ) ) send_upgrade_req( r.addr, M );
                 end
-            end else begin
-                return_hit(0, r.token);
-            end
+            end else return_hit( r.op, r.addr, 0, r.token );
         end
     endmethod
     
