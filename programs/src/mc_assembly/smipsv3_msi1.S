@@ -117,8 +117,8 @@ main0:
 
 
 main1:
-        # Look at address 0x4020
-        addiu $2, $0, 0x4020
+        # Look at address 0x4040
+        addiu $2, $0, 0x4040
 
 
 
