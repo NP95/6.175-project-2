@@ -8,9 +8,9 @@ typedef 64 SACacheSize;
 typedef 4 NumSets;
 typedef TDiv#( SACacheSize, NumSets ) NumSlots;
 
-typedef TSub#( 26, NumSetBits ) NumCacheTagBits;
 typedef TLog#( NumSets ) NumSetBits;
 typedef TLog#( NumSlots ) NumSlotBits;
+typedef TSub#( 26, NumSetBits ) NumCacheTagBits;
 
 typedef Bit#( NumCacheTagBits ) SACacheTag;
 typedef Bit#( NumSetBits ) SetIdx;
@@ -42,34 +42,35 @@ module mkSACache( WideMem mem, Bool wb, L2Cache ifc );
     
     Reg#( WideMemReq ) missReq <- mkRegU;
     Reg#( SACacheStatus ) status <- mkReg( Ready );
-    Reg#( SlotIdx ) lru <- mkRegU;
+    Reg#( SlotIdx ) lru <- mkReg( 0 );
     
     function SACacheTag getSACacheTag( Addr a ) = truncateLSB( a );
     function SetIdx getSetIdx( Addr a ) = truncateLSB( a << valueOf( NumCacheTagBits ) );
     function Bit#( 26 ) getMSBAddr( Addr a ) = truncate( a >> 6 );
     
-    function SlotIdx getLRUSlotIdx( SetIdx s );
+    function SlotIdx findLRU( SetIdx s );
         SlotIdx idx = 0;
-        for( Integer i = 0; i < valueOf( NumSlots ); i = i + 1 ) begin
-            if( age[ s ][ fromInteger( i ) ] == '1 ) idx = fromInteger( i );
-        end
+        for( Integer i = 0; i < valueOf( NumSlots ); i = i + 1 )
+            if( age[ s ][ fromInteger( i ) ] == '1 )
+                idx = fromInteger( i );
         return idx;
     endfunction
     
-    function Maybe#( SlotIdx ) getTagSlotIdx( SACacheTag t, SetIdx s );
-        Maybe#( SlotIdx ) l = tagged Invalid;
+    function Maybe#( SlotIdx ) searchTag( SACacheTag t, SetIdx s );
+        Maybe#( SlotIdx ) idx = tagged Invalid;
         for( Integer i = 0; i < valueOf( NumSlots ); i = i + 1 )
-            if( tag[ s ][ fromInteger( i ) ] == t ) l = tagged Valid fromInteger( i );
-        return l;
+            if( tag[ s ][ fromInteger( i ) ] == t )
+                idx = tagged Valid fromInteger( i );
+        return idx;
     endfunction
     
     function Action zeroAge( SetIdx s, SlotIdx l );
-        return ( action
+        return (action
             age[ s ][ l ] <= 0;
             for( Integer i = 0; i < valueOf( NumSlots ); i = i + 1 )
                 if( age[ s ][ fromInteger( i ) ] < age[ s ][ l ] )
                     age[ s ][ fromInteger( i ) ] <= age[ s ][ fromInteger( i ) ] + 1;
-        endaction );
+        endaction);
     endfunction
     
     rule writeBack( status == WriteBack );
@@ -115,7 +116,7 @@ module mkSACache( WideMem mem, Bool wb, L2Cache ifc );
     method Action req( WideMemReq r ) if( status == Ready );
         let t = getSACacheTag( r.addr );
         let s = getSetIdx( r.addr );
-        if( getTagSlotIdx( t, s ) matches tagged Valid .l ) begin
+        if( searchTag( t, s ) matches tagged Valid .l ) begin
             if( r.write_en == 0 ) hitQ.enq( data[ s ][ l ] );
             else begin
                 data [ s ][ l ] <= r.data;
@@ -124,7 +125,7 @@ module mkSACache( WideMem mem, Bool wb, L2Cache ifc );
             end
             zeroAge( s, l );
         end else begin
-            lru     <= getLRUSlotIdx( s );
+            lru     <= findLRU( s );
             missReq <= r;
             if( wb ) status <= WriteBack; else status <= SendFillReq;
         end
