@@ -1,21 +1,13 @@
 import Types::*;
 import ProcTypes::*;
 import CacheTypes::*;
+import NBCacheTypes::*;
 import Fifo::*;
 import Vector::*;
 
-typedef 64 SACacheSize;
 typedef 4 NumSets;
-typedef TDiv#( SACacheSize, NumSets ) NumSlots;
-
-typedef TSub#( 26, NumSetBits ) NumCacheTagBits;
-typedef TLog#( NumSets ) NumSetBits;
-typedef TLog#( NumSlots ) NumSlotBits;
-
-typedef Bit#( NumCacheTagBits ) SACacheTag;
-typedef Bit#( NumSetBits ) SetIdx;
-typedef Bit#( NumSlotBits ) SlotIdx;
-typedef SlotIdx Age;
+typedef Bit#(TLog#(NumSets)) SetIdx;
+typedef SetIdx Age;
 
 typedef enum { Ready, WriteBack, SendFillReq, WaitFillResp } SACacheStatus deriving ( Bits, Eq );
 
@@ -24,109 +16,95 @@ interface L2Cache;
     method ActionValue#( CacheLine ) resp;
 endinterface
 
-module mkSACache( WideMem mem, Bool wb, L2Cache ifc );
+module mkSACache( WideMem mem, L2Cache ifc );
     
-    Vector#( NumSets, Vector#( NumSlots, Reg#( SACacheTag ) ) )
-        tag <- replicateM( replicateM( mkReg( 0 ) ) );
-    
-    Vector#( NumSets, Vector#( NumSlots, Reg#( CacheLine ) ) )
-        data <- replicateM( replicateM( mkReg( replicate( 0 ) ) ) );
-    
-    Vector#( NumSets, Vector#( NumSlots, Reg#( Bool ) ) )
-        dirty <- replicateM( replicateM( mkReg( False ) ) );
-    
-    Vector#( NumSets, Vector#( NumSlots, Reg#( Age ) ) )
-        age <- replicateM( replicateM( mkReg( '1 ) ) );
+    Vector#(NumSets,Vector#(CacheRows,Reg#(Maybe#(CacheTag)))) tag <- replicateM(replicateM(mkReg(tagged Invalid)));    
+    Vector#(NumSets,Vector#(CacheRows,Reg#(CacheLine))) data <- replicateM(replicateM(mkReg(replicate(0))));
+    Vector#(NumSets,Vector#(CacheRows,Reg#(Bool))) dirty <- replicateM(replicateM(mkReg(False)));
+    Vector#(NumSets,Vector#(CacheRows,Reg#(Age))) age <- replicateM(replicateM(mkReg(3)));
     
     Fifo#( 2, CacheLine ) hitQ <- mkCFFifo;
     
     Reg#( WideMemReq ) missReq <- mkRegU;
     Reg#( SACacheStatus ) status <- mkReg( Ready );
-    Reg#( SlotIdx ) lru <- mkRegU;
-    
-    function SACacheTag getSACacheTag( Addr a ) = truncateLSB( a );
-    function SetIdx getSetIdx( Addr a ) = truncateLSB( a << valueOf( NumCacheTagBits ) );
-    function Bit#( 26 ) getMSBAddr( Addr a ) = truncate( a >> 6 );
-    
-    function SlotIdx getLRUSlotIdx( SetIdx s );
-        SlotIdx idx = 0;
-        for( Integer i = 0; i < valueOf( NumSlots ); i = i + 1 ) begin
-            if( age[ s ][ fromInteger( i ) ] == '1 ) idx = fromInteger( i );
+    Reg#( SetIdx ) lru <- mkRegU;
+      
+    function SetIdx getLRUSetIdx( CacheIndex idx );
+        SetIdx set_idx = 0;
+        for( Integer i = 0; i < valueOf( NumSets ); i = i + 1 ) begin
+            if( age[fromInteger(i)][idx] == 3 )
+                set_idx = fromInteger(i);
         end
-        return idx;
+        return set_idx;
     endfunction
     
-    function Maybe#( SlotIdx ) getTagSlotIdx( SACacheTag t, SetIdx s );
-        Maybe#( SlotIdx ) l = tagged Invalid;
-        for( Integer i = 0; i < valueOf( NumSlots ); i = i + 1 )
-            if( tag[ s ][ fromInteger( i ) ] == t ) l = tagged Valid fromInteger( i );
+    function Maybe#( SetIdx ) getTagSetIdx( CacheTag t, CacheIndex idx );
+        Maybe#( SetIdx ) l = tagged Invalid;
+        for( Integer i = 0; i < valueOf( NumSets ); i = i + 1 )
+            if( tag[fromInteger(i)][idx] == tagged Valid t )
+                l = tagged Valid fromInteger(i);
         return l;
     endfunction
     
-    function Action zeroAge( SetIdx s, SlotIdx l );
+    function Action zeroAge( CacheIndex idx, SetIdx s);
         return ( action
-            age[ s ][ l ] <= 0;
-            for( Integer i = 0; i < valueOf( NumSlots ); i = i + 1 )
-                if( age[ s ][ fromInteger( i ) ] < age[ s ][ l ] )
-                    age[ s ][ fromInteger( i ) ] <= age[ s ][ fromInteger( i ) ] + 1;
+            for( Integer i = 0; i < valueOf( NumSets ); i = i + 1 )
+                if( age[fromInteger(i)][idx] < age[s][idx] )
+                    age[fromInteger(i)][idx] <= age[fromInteger(i)][idx] + 1;
+            age[s][idx] <= 0;
         endaction );
     endfunction
     
     rule writeBack( status == WriteBack );
-        
-        let s = getSetIdx( missReq.addr );
-        
-        if( dirty[ s ][ lru ] ) mem.req( WideMemReq{
-            write_en: '1,
-            addr: { getMSBAddr( missReq.addr ), 0 },
-            data: data[ s ][ lru ]
-        } );
-        
+        let s = getIndex( missReq.addr );
+        if( dirty[lru][s] )
+          if(tag[lru][s] matches tagged Valid .t) 
+            mem.req(WideMemReq{write_en: '1, addr: { t, s, 0 }, data: data[lru][s]});
         status <= SendFillReq;
-        
     endrule
     
     rule sendFillReq( status == SendFillReq );
-        let r = missReq; r.write_en = 0;
+        let r = missReq;
+        r.write_en = 0;
         mem.req( r );
         status <= WaitFillResp;
     endrule
     
     rule waitFillResp( status == WaitFillResp );
-        
-        let t  = getSACacheTag( missReq.addr );
-        let s  = getSetIdx( missReq.addr );
+        let t  = getTag( missReq.addr );
+        let s  = getIndex( missReq.addr );
         let ld = missReq.write_en == 0;
-        let d <- mem.resp;
+        let d <- mem.resp; 
+        if(ld)
+            hitQ.enq( d );
+        else
+            d = missReq.data;
         
-        if( ld ) hitQ.enq( d );
-        else d = missReq.data;
-        
-        tag  [ s ][ lru ] <= t;
-        data [ s ][ lru ] <= d;
-        dirty[ s ][ lru ] <= !ld;
-        
-        zeroAge( s, lru );
-        
-        status <= Ready;
-        
+        tag  [lru][s] <= tagged Valid t;
+        data [lru][s] <= d;
+        dirty[lru][s] <= !ld;
+
+        zeroAge(s,lru);
+        status <= Ready;        
     endrule
     
     method Action req( WideMemReq r ) if( status == Ready );
-        let t = getSACacheTag( r.addr );
-        let s = getSetIdx( r.addr );
-        if( getTagSlotIdx( t, s ) matches tagged Valid .l ) begin
-            if( r.write_en == 0 ) hitQ.enq( data[ s ][ l ] );
+        let t = getTag( r.addr );
+        let s = getIndex( r.addr );
+        if( getTagSetIdx( t, s ) matches tagged Valid .l ) begin
+            if( r.write_en == 0 )
+                hitQ.enq( data[l][s] );
             else begin
-                data [ s ][ l ] <= r.data;
-                dirty[ s ][ l ] <= True;
-                if( !wb ) mem.req( r );
+                data[l][s] <= r.data;
+                dirty[l][s] <= True;
             end
-            zeroAge( s, l );
+            zeroAge(s, l);
         end else begin
-            lru     <= getLRUSlotIdx( s );
+            let lru_tmp = getLRUSetIdx( s );
+            lru <= lru_tmp;
             missReq <= r;
-            if( wb ) status <= WriteBack; else status <= SendFillReq;
+            if (tag[lru_tmp][s] matches tagged Valid .tg) status <= WriteBack;
+            else status <= SendFillReq;
         end
     endmethod
     

@@ -13,7 +13,7 @@ module mkParentProtocolProcessor( MessageFifo#( n ) r2m,
                                   WideMem _mem,
                                   Empty ifc );
     
-    L2Cache mem <- mkSACache( _mem, True );
+    L2Cache mem <- mkSACache( _mem);
     
     Reg#( Bool ) memResp <- mkReg( False );
     
