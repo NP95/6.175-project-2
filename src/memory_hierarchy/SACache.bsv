@@ -60,6 +60,7 @@ module mkSACache( WideMem mem, L2Cache ifc );
         if( dirty[lru][s] )
           if(tag[lru][s] matches tagged Valid .t) 
             mem.req(WideMemReq{write_en: '1, addr: { t, s, 0 }, data: data[lru][s]});
+
         status <= SendFillReq;
     endrule
     

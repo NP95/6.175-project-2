@@ -173,13 +173,14 @@ module mkRegReorderBuffer(ReorderBuffer ifc);
 
     function Bool isAluInst(Integer index);
         return (case (issue_row[index].inst.iType)
-                Alu:        True;
-                J:          True;
-                Jr:         True;
-                Br:         True;
-                Mfc0:       True;
-                Mtc0:       True;
-                default:    False;
+                Alu:            True;
+                J:              True;
+                Jr:             True;
+                Br:             True;
+                Mfc0:           True;
+                Mtc0:           True;
+                Unsupported:    True;
+                default:        False;
             endcase);
     endfunction
 
@@ -218,11 +219,12 @@ module mkRegReorderBuffer(ReorderBuffer ifc);
 
     function Bool issueAtHeadOnly(Integer index);
         return (case (issue_row[index].inst.iType)
-                St:         True;
-                Sc:         True;
-                Mtc0:       True;
-                Mfc0:       True;
-                default:    False;
+                St:             True;
+                Sc:             True;
+                Mtc0:           True;
+                Mfc0:           True;
+                Unsupported:    True;
+                default:        False;
             endcase);
     endfunction
 
