@@ -10,14 +10,12 @@ import SACache::*;
 
 module mkParentProtocolProcessor( MessageFifo#( n ) r2m,
                                   MessageFifo#( n ) m2r,
-                                  WideMem mem,
+                                  WideMem _mem,
                                   Empty ifc );
     
-    Bool useL2Cache = False;
+    L2Cache mem <- mkSACache( _mem, True );
     
     Reg#( Bool ) memResp <- mkReg( False );
-    
-    L2Cache l2 <- mkSACache( mem );
     
     Vector#( NumCaches, Vector#( CacheRows, Reg#( MSI ) ) )
         state <- replicateM( replicateM( mkReg( I ) ) );
@@ -82,17 +80,14 @@ module mkParentProtocolProcessor( MessageFifo#( n ) r2m,
                     if( i matches tagged Invalid ) begin
                         if( getChild( c, a ) == I ) begin
                             if( memResp ) begin
-                                let dat <- useL2Cache ? l2.resp : mem.resp;
+                                let dat <- mem.resp;
                                 let r = CacheMemResp{ child: c, addr: a, state: y, data: dat };
                                 m2r.enq_resp( r );
                                 setChild( c, a, y );
                                 r2m.deq;
                                 memResp <= False;
                             end else begin
-                                if( useL2Cache )
-                                    l2.req( toWideMemReq( MemReq{ op: Ld, addr: a, data: ? } ) );
-                                else
-                                    mem.req( toWideMemReq( MemReq{ op: Ld, addr: a, data: ? } ) );
+                                mem.req( toWideMemReq( MemReq{ op: Ld, addr: a, data: ? } ) );
                                 memResp <= True;
                             end
                         end else begin
@@ -120,10 +115,7 @@ module mkParentProtocolProcessor( MessageFifo#( n ) r2m,
                 r2m.deq;
                 Addr addr = { getTag( a ), getIndex( a ), '0 };
                 if( getChild( c, a ) == M )
-                    if( useL2Cache )
-                        l2.req( WideMemReq{ write_en: '1, addr: addr, data: dat } );
-                    else
-                        mem.req( WideMemReq{ write_en: '1, addr: addr, data: dat } );
+                    mem.req( WideMemReq{ write_en: '1, addr: addr, data: dat } );
                 setChild( c, a, y );
                 if( isValid( getWaitc( c, a ) ) && fromMaybe( ?, getWaitc( c, a ) ) >= y )
                     setWaitc( c, a, tagged Invalid );
